@@ -35,6 +35,7 @@ import org.apache.carbondata.common.constants.LoggerAction
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.common.logging.LogServiceFactory
 import org.apache.carbondata.core.constants.CarbonCommonConstants
+import org.apache.carbondata.core.constants.SortScopeOptions.SortScope
 import org.apache.carbondata.core.exception.InvalidConfigurationException
 import org.apache.carbondata.core.metadata.datatype.DataTypes
 import org.apache.carbondata.core.metadata.schema.PartitionInfo
@@ -294,6 +295,18 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
 
     fields.zipWithIndex.foreach { case (field, index) =>
       field.schemaOrdinal = index
+    }
+
+    // If sort_scope is not no_sort && sort_columns specified by user is empty, then throw exception
+    if (tableProperties.get(CarbonCommonConstants.SORT_COLUMNS).isDefined
+        && tableProperties(CarbonCommonConstants.SORT_COLUMNS).equalsIgnoreCase("") &&
+        tableProperties.get(CarbonCommonConstants.SORT_SCOPE).isDefined &&
+        !tableProperties(CarbonCommonConstants.SORT_SCOPE)
+          .equalsIgnoreCase(SortScope.NO_SORT.name())) {
+      throw new MalformedCarbonCommandException(
+        s"Cannot set SORT_COLUMNS as empty when SORT_SCOPE is ${
+          tableProperties(CarbonCommonConstants.SORT_SCOPE)
+        } ")
     }
     val (dims, msrs, noDictionaryDims, sortKeyDims, varcharColumns) = extractDimAndMsrFields(
       fields, tableProperties)
@@ -784,13 +797,19 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
         throw new MalformedCarbonCommandException(errorMsg)
       }
       val rangeField = fields.find(_.column.equalsIgnoreCase(rangeColumn))
+      val dataType = rangeField.get.dataType.get
       if (rangeField.isEmpty) {
         val errorMsg = "range_column: " + rangeColumn +
                        " does not exist in table. Please check the create table statement."
         throw new MalformedCarbonCommandException(errorMsg)
-      } else if (DataTypes.BINARY.getName.equalsIgnoreCase(rangeField.get.dataType.get)) {
+      } else if (DataTypes.BINARY.getName.equalsIgnoreCase(dataType) ||
+                 DataTypes.BOOLEAN.getName.equalsIgnoreCase(dataType) ||
+                 CarbonCommonConstants.ARRAY.equalsIgnoreCase(dataType) ||
+                 CarbonCommonConstants.STRUCT.equalsIgnoreCase(dataType) ||
+                 CarbonCommonConstants.MAP.equalsIgnoreCase(dataType) ||
+                 CarbonCommonConstants.DECIMAL.equalsIgnoreCase(dataType)) {
         throw new MalformedCarbonCommandException(
-          "RANGE_COLUMN doesn't support binary data type:" + rangeColumn)
+          s"RANGE_COLUMN doesn't support $dataType data type: " + rangeColumn)
       } else {
         tableProperties.put(CarbonCommonConstants.RANGE_COLUMN, rangeField.get.column)
       }
@@ -835,6 +854,12 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
                          "Please check the create table statement."
           throw new MalformedCarbonCommandException(errorMsg)
         }
+        val rangeField = fields.find(_.column.equalsIgnoreCase(distIncludeCol.trim))
+        if ("binary".equalsIgnoreCase(rangeField.get.dataType.get)) {
+          throw new MalformedCarbonCommandException(
+            "DICTIONARY_INCLUDE is unsupported for binary data type column: " +
+                    distIncludeCol.trim)
+        }
         if (varcharCols.exists(x => x.equalsIgnoreCase(distIncludeCol.trim))) {
           throw new MalformedCarbonCommandException(
             "DICTIONARY_INCLUDE is unsupported for long string datatype column: " +
@@ -864,7 +889,7 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
                  !dictIncludeCols.exists(x => x.equalsIgnoreCase(field.column))) {
         noDictionaryDims :+= field.column
         dimFields += field
-      } else if (isDetectAsDimentionDataType(field.dataType.get)) {
+      } else if (isDetectAsDimensionDataType(field.dataType.get)) {
         dimFields += field
         // consider all String and binary cols as noDicitonaryDims by default
         if ((DataTypes.STRING.getName.equalsIgnoreCase(field.dataType.get)) ||
@@ -928,11 +953,11 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
   }
 
   /**
-   * detect dimention data type
+   * detect dimension data type
    *
    * @param dimensionDatatype
    */
-  def isDetectAsDimentionDataType(dimensionDatatype: String): Boolean = {
+  def isDetectAsDimensionDataType(dimensionDatatype: String): Boolean = {
     val dimensionType = Array("string",
       "array",
       "struct",
@@ -965,7 +990,8 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
    */
   def isDataTypeSupportedForDictionary_Exclude(columnDataType: String): Boolean = {
     val dataTypes =
-      Array("string", "timestamp", "int", "long", "bigint", "struct", "array", "map", "binary")
+      Array("string", "timestamp", "int", "integer", "long", "bigint", "struct", "array",
+        "map", "binary")
     dataTypes.exists(x => x.equalsIgnoreCase(columnDataType))
   }
 
@@ -1123,6 +1149,7 @@ abstract class CarbonDDLSqlParser extends AbstractCarbonSparkSQLParser {
       "SORT_COLUMN_BOUNDS",
       "LOAD_MIN_SIZE_INMB",
       "SCALE_FACTOR",
+      "BINARY_DECODER",
       "SORT_SCOPE"
     )
     var isSupported = true

@@ -26,11 +26,13 @@ import org.apache.carbondata.core.scan.expression.ColumnExpression;
 import org.apache.carbondata.core.scan.expression.LiteralExpression;
 import org.apache.carbondata.core.scan.expression.conditional.EqualToExpression;
 import org.apache.carbondata.core.util.CarbonProperties;
+import org.apache.carbondata.core.util.path.CarbonTablePath;
 import org.apache.carbondata.util.BinaryUtil;
 
 import org.apache.commons.codec.DecoderException;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.io.FileUtils;
+import org.apache.hadoop.mapreduce.InputSplit;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,6 +45,7 @@ import javax.imageio.stream.ImageInputStream;
 import java.awt.color.ColorSpace;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
@@ -61,13 +64,16 @@ public class ImageTest extends TestCase {
     } catch (IOException e) {
       e.printStackTrace();
     }
-    Field[] fields = new Field[5];
+    Field[] fields = new Field[7];
     fields[0] = new Field("name", DataTypes.STRING);
     fields[1] = new Field("age", DataTypes.INT);
     fields[2] = new Field("image1", DataTypes.BINARY);
     fields[3] = new Field("image2", DataTypes.BINARY);
     fields[4] = new Field("image3", DataTypes.BINARY);
-
+    fields[5] = new Field("decodeString", DataTypes.BINARY);
+    fields[6] = new Field("decodeByte", DataTypes.BINARY);
+    String[] projection = new String[]{"name", "age", "image1",
+        "image2", "image3", "decodeString", "decodeByte"};
     byte[] originBinary = null;
 
     // read and write image data
@@ -78,6 +84,7 @@ public class ImageTest extends TestCase {
           .withCsvInput(new Schema(fields))
           .writtenBy("SDKS3Example")
           .withPageSizeInMb(1)
+          .withLoadOption("binary_decoder", "base64")
           .build();
 
       for (int i = 0; i < rows; i++) {
@@ -87,7 +94,8 @@ public class ImageTest extends TestCase {
         while ((bis.read(originBinary)) != -1) {
         }
         // write data
-        writer.write(new Object[]{"robot" + (i % 10), i, originBinary, originBinary, originBinary});
+        writer.write(new Object[]{"robot" + (i % 10), i, originBinary,
+            originBinary, originBinary, "YWJj", "YWJj".getBytes()});
         bis.close();
       }
       writer.close();
@@ -95,6 +103,7 @@ public class ImageTest extends TestCase {
 
     CarbonReader reader = CarbonReader
         .builder(path, "_temp")
+        .projection(projection)
         .build();
 
     System.out.println("\nData:");
@@ -102,19 +111,27 @@ public class ImageTest extends TestCase {
     while (i < 20 && reader.hasNext()) {
       Object[] row = (Object[]) reader.readNextRow();
 
-      byte[] outputBinary = (byte[]) row[1];
-      byte[] outputBinary2 = (byte[]) row[2];
-      byte[] outputBinary3 = (byte[]) row[3];
+      byte[] outputBinary = (byte[]) row[2];
+      byte[] outputBinary2 = (byte[]) row[3];
+      byte[] outputBinary3 = (byte[]) row[4];
+      String stringValue = new String((byte[]) row[5]);
+      String byteValue = new String((byte[]) row[6]);
+      // when input is string, it will be decoded by base64.
+      Assert.assertTrue("abc".equals(stringValue));
+      // when input is byte[], it will be not decoded by base64.
+      Assert.assertTrue("YWJj".equals(byteValue));
       System.out.println(row[0] + " " + row[1] + " image1 size:" + outputBinary.length
-          + " image2 size:" + outputBinary2.length + " image3 size:" + outputBinary3.length);
+          + " image2 size:" + outputBinary2.length + " image3 size:" + outputBinary3.length
+          + "\t" + stringValue + "\t" + byteValue);
 
       for (int k = 0; k < 3; k++) {
 
-        byte[] originBinaryTemp = (byte[]) row[1 + k];
+        byte[] originBinaryTemp = (byte[]) row[2 + k];
         // validate output binary data and origin binary data
         assert (originBinaryTemp.length == outputBinary.length);
         for (int j = 0; j < originBinaryTemp.length; j++) {
           assert (originBinaryTemp[j] == outputBinary[j]);
+          assert (originBinary[j] == outputBinary[j]);
         }
 
         // save image, user can compare the save image and original image
@@ -654,6 +671,84 @@ public class ImageTest extends TestCase {
     assertEquals(3, result.size());
   }
 
+  @Test
+  public void testWriteNonBase64WithBase64Decoder() throws IOException, InvalidLoadOptionException, InterruptedException {
+    String imagePath = "./src/test/resources/image/carbondatalogo.jpg";
+    int num = 1;
+    int rows = 10;
+    String path = "./target/binary";
+    try {
+      FileUtils.deleteDirectory(new File(path));
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    Field[] fields = new Field[7];
+    fields[0] = new Field("name", DataTypes.STRING);
+    fields[1] = new Field("age", DataTypes.INT);
+    fields[2] = new Field("image1", DataTypes.BINARY);
+    fields[3] = new Field("image2", DataTypes.BINARY);
+    fields[4] = new Field("image3", DataTypes.BINARY);
+    fields[5] = new Field("decodeString", DataTypes.BINARY);
+    fields[6] = new Field("decodeByte", DataTypes.BINARY);
+    byte[] originBinary = null;
+
+    // read and write image data
+    for (int j = 0; j < num; j++) {
+      CarbonWriter writer = CarbonWriter
+          .builder()
+          .outputPath(path)
+          .withCsvInput(new Schema(fields))
+          .writtenBy("SDKS3Example")
+          .withPageSizeInMb(1)
+          .withLoadOption("binary_decoder", "base64")
+          .build();
+
+      for (int i = 0; i < rows; i++) {
+        // read image and encode to Hex
+        BufferedInputStream bis = new BufferedInputStream(new FileInputStream(imagePath));
+        originBinary = new byte[bis.available()];
+        while ((bis.read(originBinary)) != -1) {
+        }
+        // write data
+        writer.write(new Object[]{"robot" + (i % 10), i, originBinary,
+            originBinary, originBinary, "^YWJj", "^YWJj".getBytes()});
+        bis.close();
+      }
+      try {
+        writer.close();
+        Assert.assertTrue(false);
+      } catch (Exception e) {
+        Assert.assertTrue(e.getMessage().contains("Binary decoder is base64, but data is not base64"));
+      }
+    }
+  }
+
+  public void testInvalidValueForBinaryDecoder() throws IOException, InvalidLoadOptionException {
+    String path = "./target/binary";
+    Field[] fields = new Field[7];
+    fields[0] = new Field("name", DataTypes.STRING);
+    fields[1] = new Field("age", DataTypes.INT);
+    fields[2] = new Field("image1", DataTypes.BINARY);
+    fields[3] = new Field("image2", DataTypes.BINARY);
+    fields[4] = new Field("image3", DataTypes.BINARY);
+    fields[5] = new Field("decodeString", DataTypes.BINARY);
+    fields[6] = new Field("decodeByte", DataTypes.BINARY);
+    try {
+      CarbonWriter
+          .builder()
+          .outputPath(path)
+          .withCsvInput(new Schema(fields))
+          .writtenBy("SDKS3Example")
+          .withPageSizeInMb(1)
+          .withLoadOption("binary_decoder", "base")
+          .build();
+      Assert.assertTrue(false);
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(e.getMessage().contains(
+          "Binary decoder only support Base64, Hex or no decode for string, don't support base"));
+    }
+  }
+
   public void binaryToCarbonWithHWD(String sourceImageFolder, String outputPath, String preDestPath,
                                     String sufAnnotation, final String sufImage, int numToWrite)
       throws Exception {
@@ -813,6 +908,223 @@ public class ImageTest extends TestCase {
     }
     System.out.println("\nFinished");
     reader.close();
+  }
+
+  @Test
+  public void testBinaryWithProjectionAndFileListsAndWithFile() throws Exception {
+    int num = 5;
+    String path = "./target/flowersFolder";
+    try {
+      FileUtils.deleteDirectory(new File(path));
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    Field[] fields = new Field[5];
+    fields[0] = new Field("imageId", DataTypes.INT);
+    fields[1] = new Field("imageName", DataTypes.STRING);
+    fields[2] = new Field("imageBinary", DataTypes.BINARY);
+    fields[3] = new Field("txtName", DataTypes.STRING);
+    fields[4] = new Field("txtContent", DataTypes.STRING);
+
+    String imageFolder = "./src/test/resources/image/flowers";
+
+    byte[] originBinary = null;
+
+    // read and write image data
+    for (int j = 0; j < num; j++) {
+      CarbonWriter writer = CarbonWriter
+          .builder()
+          .outputPath(path)
+          .withCsvInput(new Schema(fields))
+          .writtenBy("SDKS3Example")
+          .withPageSizeInMb(1)
+          .build();
+      ArrayList files = listFiles(imageFolder, ".jpg");
+
+      if (null != files) {
+        for (int i = 0; i < files.size(); i++) {
+          // read image and encode to Hex
+          BufferedInputStream bis = new BufferedInputStream(new FileInputStream(files.get(i).toString()));
+          char[] hexValue = null;
+          originBinary = new byte[bis.available()];
+          while ((bis.read(originBinary)) != -1) {
+            hexValue = Hex.encodeHex(originBinary);
+          }
+
+          String txtFileName = files.get(i).toString().split(".jpg")[0] + ".txt";
+          BufferedInputStream txtBis = new BufferedInputStream(new FileInputStream(txtFileName));
+          String txtValue = null;
+          byte[] txtBinary = null;
+          txtBinary = new byte[txtBis.available()];
+          while ((txtBis.read(txtBinary)) != -1) {
+            txtValue = new String(txtBinary, "UTF-8");
+          }
+          // write data
+          System.out.println(files.get(i).toString());
+          writer.write(new String[]{String.valueOf(i), files.get(i).toString(), String.valueOf(hexValue),
+              txtFileName, txtValue});
+          bis.close();
+        }
+      }
+      writer.close();
+    }
+
+    // 1. read with file list
+    List fileLists = listFiles(path, CarbonTablePath.CARBON_DATA_EXT);
+    int fileNum = fileLists.size() / 2;
+
+    Schema schema = CarbonSchemaReader.readSchema((String) fileLists.get(0)).asOriginOrder();
+    List projectionLists = new ArrayList();
+    projectionLists.add((schema.getFields())[1].getFieldName());
+    projectionLists.add((schema.getFields())[2].getFieldName());
+
+    CarbonReader reader = ArrowCarbonReader
+        .builder()
+        .withFileLists(fileLists.subList(0, fileNum))
+        .projection(projectionLists)
+        .buildArrowReader();
+
+    System.out.println("\nData:");
+    int i = 0;
+    while (i < 20 && reader.hasNext()) {
+      Object[] row = (Object[]) reader.readNextRow();
+
+      assertEquals(2, row.length);
+      byte[] outputBinary = (byte[]) row[1];
+      System.out.println(row[0] + " " + row[1] + " image size:" + outputBinary.length);
+      i++;
+    }
+    assert (i == fileNum * 3);
+    System.out.println("\nFinished: " + i);
+    reader.close();
+
+    // 2. read withFile
+    CarbonReader reader2 = CarbonReader
+        .builder()
+        .withFile(fileLists.get(0).toString())
+        .build();
+
+    System.out.println("\nData2:");
+    i = 0;
+    while (i < 20 && reader2.hasNext()) {
+      Object[] row = (Object[]) reader2.readNextRow();
+      assertEquals(5, row.length);
+
+      assert (null != row[0].toString());
+      assert (null != row[0].toString());
+      assert (null != row[0].toString());
+      byte[] outputBinary = (byte[]) row[1];
+
+      String txt = row[2].toString();
+      System.out.println(row[0] + " " + row[2] +
+          " image size:" + outputBinary.length + " txt size:" + txt.length());
+      i++;
+    }
+    System.out.println("\nFinished: " + i);
+    reader2.close();
+
+    // 3. read with folder
+    CarbonReader reader3 = CarbonReader
+        .builder(path)
+        .withFolder(path)
+        .build();
+
+    System.out.println("\nData:");
+    i = 0;
+    while (i < 20 && reader3.hasNext()) {
+      Object[] row = (Object[]) reader3.readNextRow();
+
+      byte[] outputBinary = (byte[]) row[1];
+      System.out.println(row[0] + " " + row[2] + " image size:" + outputBinary.length);
+      i++;
+    }
+    System.out.println("\nFinished: " + i);
+    reader3.close();
+
+    InputSplit[] splits = ArrowCarbonReader
+        .builder()
+        .withFileLists(fileLists.subList(0, fileNum))
+        .getSplits(true);
+    Assert.assertTrue(splits.length == fileNum);
+    for (int j = 0; j < splits.length; j++) {
+      ArrowCarbonReader.builder(splits[j]).build();
+    }
+  }
+
+  public void testGetSplitWithFileListsFromDifferentFolder() throws Exception {
+
+    String path1 = "./target/flowersFolder1";
+    String path2 = "./target/flowersFolder2";
+    writeCarbonFile(path1, 3);
+    writeCarbonFile(path2, 2);
+    List fileLists = listFiles(path1, CarbonTablePath.CARBON_DATA_EXT);
+    fileLists.addAll(listFiles(path2, CarbonTablePath.CARBON_DATA_EXT));
+
+    InputSplit[] splits = ArrowCarbonReader
+        .builder()
+        .withFileLists(fileLists)
+        .getSplits(true);
+    Assert.assertTrue(5 == splits.length);
+    for (int j = 0; j < splits.length; j++) {
+      ArrowCarbonReader.builder(splits[j]).build();
+    }
+  }
+
+  public void writeCarbonFile(String path, int num) throws Exception {
+    try {
+      FileUtils.deleteDirectory(new File(path));
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    Field[] fields = new Field[5];
+    fields[0] = new Field("imageId", DataTypes.INT);
+    fields[1] = new Field("imageName", DataTypes.STRING);
+    fields[2] = new Field("imageBinary", DataTypes.BINARY);
+    fields[3] = new Field("txtName", DataTypes.STRING);
+    fields[4] = new Field("txtContent", DataTypes.STRING);
+
+    String imageFolder = "./src/test/resources/image/flowers";
+
+    byte[] originBinary = null;
+
+    // read and write image data
+    for (int j = 0; j < num; j++) {
+      CarbonWriter writer = CarbonWriter
+          .builder()
+          .outputPath(path)
+          .withCsvInput(new Schema(fields))
+          .writtenBy("SDKS3Example")
+          .withPageSizeInMb(1)
+          .build();
+      ArrayList files = listFiles(imageFolder, ".jpg");
+
+      if (null != files) {
+        for (int i = 0; i < files.size(); i++) {
+          // read image and encode to Hex
+          BufferedInputStream bis = new BufferedInputStream(new FileInputStream(files.get(i).toString()));
+          char[] hexValue = null;
+          originBinary = new byte[bis.available()];
+          while ((bis.read(originBinary)) != -1) {
+            hexValue = Hex.encodeHex(originBinary);
+          }
+
+          String txtFileName = files.get(i).toString().split(".jpg")[0] + ".txt";
+          BufferedInputStream txtBis = new BufferedInputStream(new FileInputStream(txtFileName));
+          String txtValue = null;
+          byte[] txtBinary = null;
+          txtBinary = new byte[txtBis.available()];
+          while ((txtBis.read(txtBinary)) != -1) {
+            txtValue = new String(txtBinary, "UTF-8");
+          }
+          // write data
+          System.out.println(files.get(i).toString());
+          writer.write(new String[]{String.valueOf(i), files.get(i).toString(), String.valueOf(hexValue),
+              txtFileName, txtValue});
+          bis.close();
+        }
+      }
+      writer.close();
+    }
   }
 
 }

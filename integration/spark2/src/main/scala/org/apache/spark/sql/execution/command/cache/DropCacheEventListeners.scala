@@ -20,20 +20,19 @@ package org.apache.spark.sql.execution.command.cache
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.CarbonEnv
+import org.apache.spark.sql.{CarbonEnv, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.command.cache.DropCachePreAggEventListener.LOGGER
+import org.apache.spark.util.DataMapUtil
 
 import org.apache.carbondata.common.logging.LogServiceFactory
 import org.apache.carbondata.core.cache.CacheProvider
 import org.apache.carbondata.core.datamap.DataMapStoreManager
 import org.apache.carbondata.core.metadata.schema.datamap.DataMapClassProvider
-import org.apache.carbondata.events.{DropTableCacheEvent, Event, OperationContext,
-  OperationEventListener}
+import org.apache.carbondata.core.metadata.schema.table.DataMapSchema
+import org.apache.carbondata.events.{DropTableCacheEvent, Event, OperationContext, OperationEventListener}
 import org.apache.carbondata.processing.merger.CarbonDataMergerUtil
 
-object DropCachePreAggEventListener extends OperationEventListener {
+object DropCacheDataMapEventListener extends OperationEventListener {
 
   val LOGGER = LogServiceFactory.getLogService(this.getClass.getCanonicalName)
 
@@ -49,32 +48,44 @@ object DropCachePreAggEventListener extends OperationEventListener {
         val carbonTable = dropCacheEvent.carbonTable
         val sparkSession = dropCacheEvent.sparkSession
         val internalCall = dropCacheEvent.internalCall
-        if (carbonTable.isChildDataMap && !internalCall) {
+        if ((carbonTable.isChildDataMap || carbonTable.isChildTable) && !internalCall) {
           throw new UnsupportedOperationException("Operation not allowed on child table.")
         }
 
         if (carbonTable.hasDataMapSchema) {
           val childrenSchemas = carbonTable.getTableInfo.getDataMapSchemaList.asScala
             .filter(_.getRelationIdentifier != null)
-          for (childSchema <- childrenSchemas) {
-            val childTable =
-              CarbonEnv.getCarbonTable(
-                TableIdentifier(childSchema.getRelationIdentifier.getTableName,
-                  Some(childSchema.getRelationIdentifier.getDatabaseName)))(sparkSession)
-            try {
-              val dropCacheCommandForChildTable =
-                CarbonDropCacheCommand(
-                  TableIdentifier(childTable.getTableName, Some(childTable.getDatabaseName)),
-                  internalCall = true)
-              dropCacheCommandForChildTable.processMetadata(sparkSession)
-            }
-            catch {
-              case e: Exception =>
-                LOGGER.warn(
-                  s"Clean cache for PreAgg table ${ childTable.getTableName } failed.", e)
-            }
-          }
+          dropCacheForChildTables(sparkSession, childrenSchemas)
         }
+        if (DataMapUtil.hasMVDataMap(carbonTable)) {
+          val childrenSchemas = DataMapStoreManager.getInstance
+            .getDataMapSchemasOfTable(carbonTable).asScala
+            .filter(dataMapSchema => null != dataMapSchema.getRelationIdentifier &&
+                                     !dataMapSchema.isIndexDataMap)
+          dropCacheForChildTables(sparkSession, childrenSchemas)
+        }
+    }
+  }
+
+  private def dropCacheForChildTables(sparkSession: SparkSession,
+      childrenSchemas: mutable.Buffer[DataMapSchema]): Unit = {
+    for (childSchema <- childrenSchemas) {
+      val childTable =
+        CarbonEnv.getCarbonTable(
+          TableIdentifier(childSchema.getRelationIdentifier.getTableName,
+            Some(childSchema.getRelationIdentifier.getDatabaseName)))(sparkSession)
+      try {
+        val dropCacheCommandForChildTable =
+          CarbonDropCacheCommand(
+            TableIdentifier(childTable.getTableName, Some(childTable.getDatabaseName)),
+            internalCall = true)
+        dropCacheCommandForChildTable.processMetadata(sparkSession)
+      }
+      catch {
+        case e: Exception =>
+          LOGGER.warn(
+            s"Clean cache for child table ${ childTable.getTableName } failed.", e)
+      }
     }
   }
 }
@@ -98,7 +109,8 @@ object DropCacheBloomEventListener extends OperationEventListener {
         val datamaps = DataMapStoreManager.getInstance().getDataMapSchemasOfTable(carbonTable)
           .asScala.toList
         val segments = CarbonDataMergerUtil
-          .getValidSegmentList(carbonTable.getAbsoluteTableIdentifier).asScala.toList
+          .getValidSegmentList(carbonTable.getAbsoluteTableIdentifier, carbonTable.isChildTable)
+          .asScala.toList
 
         datamaps.foreach {
           case datamap if datamap.getProviderName

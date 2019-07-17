@@ -17,18 +17,24 @@
 
 package org.apache.spark.sql.execution.command.mutation
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command._
 
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.common.logging.LogServiceFactory
+import org.apache.carbondata.core.datamap.DataMapStoreManager
+import org.apache.carbondata.core.datamap.status.DataMapStatusManager
 import org.apache.carbondata.core.exception.ConcurrentOperationException
 import org.apache.carbondata.core.features.TableOperation
 import org.apache.carbondata.core.locks.{CarbonLockFactory, CarbonLockUtil, LockUsage}
 import org.apache.carbondata.core.mutate.CarbonUpdateUtil
 import org.apache.carbondata.core.statusmanager.SegmentStatusManager
+import org.apache.carbondata.core.util.CarbonProperties
 import org.apache.carbondata.events.{DeleteFromTablePostEvent, DeleteFromTablePreEvent, OperationContext, OperationListenerBus}
+import org.apache.carbondata.indexserver.IndexServer
 import org.apache.carbondata.processing.loading.FailureCauses
 
 /**
@@ -98,7 +104,7 @@ private[sql] case class CarbonProjectForDeleteCommand(
       // handle the clean up of IUD.
       CarbonUpdateUtil.cleanUpDeltaFiles(carbonTable, false)
 
-      DeleteExecution.deleteDeltaExecution(
+      val deletedSegments = DeleteExecution.deleteDeltaExecution(
         databaseNameOp,
         tableName,
         sparkSession,
@@ -110,9 +116,18 @@ private[sql] case class CarbonProjectForDeleteCommand(
       HorizontalCompaction.tryHorizontalCompaction(sparkSession, carbonTable,
         isUpdateOperation = false)
 
+      DeleteExecution.clearDistributedSegmentCache(carbonTable, deletedSegments)(sparkSession)
 
       if (executorErrors.failureCauses != FailureCauses.NONE) {
         throw new Exception(executorErrors.errorMsg)
+      }
+
+      val allDataMapSchemas = DataMapStoreManager.getInstance
+        .getDataMapSchemasOfTable(carbonTable).asScala
+        .filter(dataMapSchema => null != dataMapSchema.getRelationIdentifier &&
+                                 !dataMapSchema.isIndexDataMap).asJava
+      if (!allDataMapSchemas.isEmpty) {
+        DataMapStatusManager.truncateDataMap(allDataMapSchemas)
       }
 
       // trigger post event for Delete from table

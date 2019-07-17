@@ -66,6 +66,7 @@ import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentSta
 import org.apache.carbondata.core.util.{ByteUtil, CarbonProperties, CarbonUtil, ThreadLocalSessionInfo}
 import org.apache.carbondata.core.util.path.CarbonTablePath
 import org.apache.carbondata.events.{OperationContext, OperationListenerBus}
+import org.apache.carbondata.indexserver.IndexServer
 import org.apache.carbondata.processing.exception.DataLoadingException
 import org.apache.carbondata.processing.loading.FailureCauses
 import org.apache.carbondata.processing.loading.csvinput.{BlockDetails, CSVInputFormat, StringArrayWritable}
@@ -251,6 +252,20 @@ object CarbonDataRDDFactory {
                 CarbonEnv.getInstance(sqlContext.sparkSession).carbonMetaStore
                   .listAllTables(sqlContext.sparkSession).toArray,
                 skipCompactionTables.asJava)
+            }
+          }
+          // Remove compacted segments from executor cache.
+          if (CarbonProperties.getInstance().isDistributedPruningEnabled(
+              carbonLoadModel.getDatabaseName, carbonLoadModel.getTableName)) {
+            try {
+              IndexServer.getClient.invalidateSegmentCache(carbonLoadModel
+                .getCarbonDataLoadSchema.getCarbonTable,
+                compactedSegments.asScala.toArray,
+                SparkSQLUtil.getTaskGroupId(sqlContext.sparkSession))
+            } catch {
+              case ex: Exception =>
+                LOGGER.warn(s"Clear cache job has failed for ${carbonLoadModel
+                  .getDatabaseName}.${carbonLoadModel.getTableName}", ex)
             }
           }
           // giving the user his error for telling in the beeline if his triggered table
@@ -503,6 +518,7 @@ object CarbonDataRDDFactory {
       val newEntryLoadStatus =
         if (carbonLoadModel.isCarbonTransactionalTable &&
             !carbonLoadModel.getCarbonDataLoadSchema.getCarbonTable.isChildDataMap &&
+            !carbonLoadModel.getCarbonDataLoadSchema.getCarbonTable.isChildTable &&
             !CarbonLoaderUtil.isValidSegment(carbonLoadModel, carbonLoadModel.getSegmentId.toInt)) {
           LOGGER.warn("Cannot write load metadata file as there is no data to load")
           SegmentStatus.MARKED_FOR_DELETE
@@ -946,6 +962,15 @@ object CarbonDataRDDFactory {
       throw new Exception(errorMessage)
     } else {
       DataMapStatusManager.disableAllLazyDataMaps(carbonTable)
+      if (overwriteTable) {
+        val allDataMapSchemas = DataMapStoreManager.getInstance
+          .getDataMapSchemasOfTable(carbonTable).asScala
+          .filter(dataMapSchema => null != dataMapSchema.getRelationIdentifier &&
+                                   !dataMapSchema.isIndexDataMap).asJava
+        if (!allDataMapSchemas.isEmpty) {
+          DataMapStatusManager.truncateDataMap(allDataMapSchemas)
+        }
+      }
     }
     (done, metadataDetails)
   }

@@ -235,6 +235,9 @@ public class BlockletInfo implements Serializable, Writable {
       for (int i = 0; i < getNumberOfRowsPerPage().length; i++) {
         output.writeInt(getNumberOfRowsPerPage()[i]);
       }
+    } else {
+      //for old store
+      output.writeShort(0);
     }
   }
 
@@ -307,9 +310,13 @@ public class BlockletInfo implements Serializable, Writable {
     if (isSortedPresent) {
       this.isSorted = input.readBoolean();
     }
-    numberOfRowsPerPage = new int[input.readShort()];
-    for (int i = 0; i < numberOfRowsPerPage.length; i++) {
-      numberOfRowsPerPage[i] = input.readInt();
+    short pageCount = input.readShort();
+    if (pageCount != 0) {
+      // should set only for new store, old store will be set via setNumberOfRowsPerPage
+      numberOfRowsPerPage = new int[pageCount];
+      for (int i = 0; i < numberOfRowsPerPage.length; i++) {
+        numberOfRowsPerPage[i] = input.readInt();
+      }
     }
   }
 

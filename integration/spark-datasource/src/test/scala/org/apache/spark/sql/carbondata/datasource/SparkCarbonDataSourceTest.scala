@@ -22,10 +22,11 @@ import java.util
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.permission.{FsAction, FsPermission}
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.carbondata.datasource.TestUtil._
-import org.apache.spark.sql.types.{IntegerType, StringType, StructField => SparkStructField, StructType}
+import org.apache.spark.sql.types.{BinaryType, IntegerType, StringType, StructField => SparkStructField, StructType}
 import org.apache.spark.util.SparkUtil
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
@@ -37,6 +38,84 @@ import org.apache.carbondata.hadoop.testutil.StoreCreator
 import org.apache.carbondata.sdk.file.{CarbonWriter, Field, Schema}
 
 class SparkCarbonDataSourceTest extends FunSuite with BeforeAndAfterAll {
+
+
+  var writerOutputPath = new File(this.getClass.getResource("/").getPath
+          + "../../target/SparkCarbonFileFormat/SDKWriterOutput/").getCanonicalPath
+  //getCanonicalPath gives path with \, but the code expects /.
+  writerOutputPath = writerOutputPath.replace("\\", "/")
+
+  def buildTestData(rows: Int,
+                    sortColumns: List[String]): Any = {
+    val schema = new StringBuilder()
+            .append("[ \n")
+            .append("   {\"stringField\":\"string\"},\n")
+            .append("   {\"byteField\":\"byte\"},\n")
+            .append("   {\"shortField\":\"short\"},\n")
+            .append("   {\"intField\":\"int\"},\n")
+            .append("   {\"longField\":\"long\"},\n")
+            .append("   {\"doubleField\":\"double\"},\n")
+            .append("   {\"floatField\":\"float\"},\n")
+            .append("   {\"decimalField\":\"decimal(17,2)\"},\n")
+            .append("   {\"boolField\":\"boolean\"},\n")
+            .append("   {\"dateField\":\"DATE\"},\n")
+            .append("   {\"timeField\":\"TIMESTAMP\"},\n")
+            .append("   {\"varcharField\":\"varchar\"},\n")
+            .append("   {\"varcharField2\":\"varchar\"}\n")
+            .append("]")
+            .toString()
+
+    try {
+      val builder = CarbonWriter.builder()
+      val writer =
+        builder.outputPath(writerOutputPath)
+                .sortBy(sortColumns.toArray)
+                .uniqueIdentifier(System.currentTimeMillis)
+                .withBlockSize(2)
+                .withCsvInput(Schema.parseJson(schema))
+                .writtenBy("TestNonTransactionalCarbonTable")
+                .build()
+      var i = 0
+      while (i < rows) {
+        writer.write(Array[String]("robot" + i,
+          String.valueOf(i / 100),
+          String.valueOf(i / 100),
+          String.valueOf(i),
+          String.valueOf(i),
+          String.valueOf(i),
+          String.valueOf(i),
+          String.valueOf(i),
+          "true",
+          "2019-03-02",
+          "2019-02-12 03:03:34",
+          "var1",
+          "var2"))
+        i += 1
+      }
+      writer.close()
+    } catch {
+      case ex: Throwable => throw new RuntimeException(ex)
+    }
+  }
+
+  test("Carbon DataSource read SDK data with varchar") {
+    import spark._
+    FileUtils.deleteDirectory(new File(writerOutputPath))
+    val num = 10000
+    buildTestData(num, List("stringField", "intField"))
+    if (SparkUtil.isSparkVersionXandAbove("2.2")) {
+      sql("DROP TABLE IF EXISTS carbontable_varchar")
+      sql("DROP TABLE IF EXISTS carbontable_varchar2")
+      sql(s"CREATE TABLE carbontable_varchar USING CARBON LOCATION '$writerOutputPath'")
+      val e = intercept[Exception] {
+        sql("SELECT COUNT(*) FROM carbontable_varchar").show()
+      }
+      assert(e.getMessage.contains("Datatype of the Column VARCHAR present in index file, is varchar and not same as datatype of the column with same name present in table, because carbon convert varchar of carbon to string of spark, please set long_string_columns for varchar column"))
+
+      sql(s"CREATE TABLE carbontable_varchar2 USING CARBON OPTIONS('long_String_columns'='varcharField,varcharField2') LOCATION '$writerOutputPath'")
+      checkAnswer(sql("SELECT COUNT(*) FROM carbontable_varchar2"), Seq(Row(num)))
+    }
+  }
 
   test("test write using dataframe") {
     import spark.implicits._
@@ -1804,6 +1883,73 @@ class SparkCarbonDataSourceTest extends FunSuite with BeforeAndAfterAll {
     }
     sql("DROP TABLE IF EXISTS binaryCarbon")
   }
+
+    test("test load data with binary_decoder in df") {
+        import spark._
+        try {
+            sql("DROP TABLE IF EXISTS carbon_table")
+            val rdd = spark.sparkContext.parallelize(1 to 3)
+                    .map(x => Row("a" + x % 10, "b", x, "YWJj".getBytes()))
+            val customSchema = StructType(Array(
+                SparkStructField("c1", StringType),
+                SparkStructField("c2", StringType),
+                SparkStructField("number", IntegerType),
+                SparkStructField("c4", BinaryType)))
+
+            val df = spark.createDataFrame(rdd, customSchema);
+            // Saves dataFrame to carbon file
+            df.write.format("carbon")
+                    .option("binary_decoder", "base64")
+                    .saveAsTable("carbon_table")
+            val path = warehouse1 + "/carbon_table"
+
+            val carbonDF = spark.read
+                    .format("carbon")
+                    .option("tablename", "carbon_table")
+                    .schema(customSchema)
+                    .load(path)  // TODO: check why can not read when without path
+            assert(carbonDF.schema.map(_.name) === Seq("c1", "c2", "number", "c4"))
+            // "YWJj" is base64 decode data of "abc" string,
+            // but spark doesn't support string for binary, so we use byte[] and
+            // carbon will not decode for byte
+            checkAnswer(carbonDF, Seq(Row("a1", "b", 1, "YWJj".getBytes()),
+                Row("a2", "b", 2, "YWJj".getBytes()),
+                Row("a3", "b", 3, "YWJj".getBytes())))
+
+            val carbonDF2 = carbonDF.drop("c1")
+            assert(carbonDF2.schema.map(_.name) === Seq("c2", "number", "c4"))
+            checkAnswer(sql(s"select * from carbon.`$path`"),
+                Seq(Row("a1", "b", 1, "YWJj".getBytes()),
+                    Row("a2", "b", 2, "YWJj".getBytes()),
+                    Row("a3", "b", 3, "YWJj".getBytes())))
+        } catch {
+            case e: Exception =>
+                e.printStackTrace()
+                assert(false)
+        } finally {
+            sql("DROP TABLE IF EXISTS carbon_table")
+        }
+    }
+
+    test("test spark doesn't support input string value for binary data type") {
+        try {
+            val rdd = spark.sparkContext.parallelize(1 to 3)
+                    .map(x => Row("a" + x % 10, "b", x, "YWJj".getBytes()))
+            val customSchema = StructType(Array(
+                SparkStructField("c1", StringType),
+                SparkStructField("c2", StringType),
+                SparkStructField("number", IntegerType),
+                SparkStructField("c4", BinaryType)))
+
+            try {
+                spark.createDataFrame(rdd, customSchema);
+            } catch {
+                case e: RuntimeException => e.getMessage.contains(
+                    "java.lang.String is not a valid external type for schema of binary")
+            }
+
+        }
+    }
 
   override protected def beforeAll(): Unit = {
     drop

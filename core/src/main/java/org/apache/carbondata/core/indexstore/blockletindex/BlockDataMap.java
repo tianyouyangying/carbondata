@@ -117,9 +117,16 @@ public class BlockDataMap extends CoarseGrainDataMap
     BlockletDataMapModel blockletDataMapInfo = (BlockletDataMapModel) dataMapModel;
     DataFileFooterConverter fileFooterConverter =
         new DataFileFooterConverter(dataMapModel.getConfiguration());
-    List<DataFileFooter> indexInfo = fileFooterConverter
-        .getIndexInfo(blockletDataMapInfo.getFilePath(), blockletDataMapInfo.getFileData(),
-            blockletDataMapInfo.getCarbonTable().isTransactionalTable());
+    List<DataFileFooter> indexInfo = null;
+    if (blockletDataMapInfo.getIndexInfos() == null || blockletDataMapInfo.getIndexInfos()
+        .isEmpty()) {
+      indexInfo = fileFooterConverter
+          .getIndexInfo(blockletDataMapInfo.getFilePath(), blockletDataMapInfo.getFileData(),
+              blockletDataMapInfo.getCarbonTable().isTransactionalTable());
+    } else {
+      // when index info is already read and converted to data file footer object
+      indexInfo = blockletDataMapInfo.getIndexInfos();
+    }
     Path path = new Path(blockletDataMapInfo.getFilePath());
     // store file path only in case of partition table, non transactional table and flat folder
     // structure
@@ -689,7 +696,13 @@ public class BlockDataMap extends CoarseGrainDataMap
           CarbonCommonConstants.DEFAULT_CHARSET_CLASS) + CarbonTablePath.getCarbonDataExtension();
       int rowCount = dataMapRow.getInt(ROW_COUNT_INDEX);
       // prepend segment number with the blocklet file path
-      blockletToRowCountMap.put((segment.getSegmentNo() + "," + fileName), (long) rowCount);
+      String blockletMapKey = segment.getSegmentNo() + "," + fileName;
+      Long existingCount = blockletToRowCountMap.get(blockletMapKey);
+      if (null != existingCount) {
+        blockletToRowCountMap.put(blockletMapKey, (long) rowCount + existingCount);
+      } else {
+        blockletToRowCountMap.put(blockletMapKey, (long) rowCount);
+      }
     }
     return blockletToRowCountMap;
   }

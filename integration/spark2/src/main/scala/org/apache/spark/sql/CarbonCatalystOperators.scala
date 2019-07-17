@@ -38,12 +38,12 @@ case class CarbonDictionaryCatalystDecoder(
   override def output: Seq[Attribute] = {
     child match {
       case l: LogicalRelation =>
-        // If the child is logical plan then firts update all dictionary attr with IntegerType
+        // If the child is logical plan then first update all dictionary attr with IntegerType
         val logicalOut =
           CarbonDictionaryDecoder.updateAttributes(child.output, relations, aliasMap)
         CarbonDictionaryDecoder.convertOutput(logicalOut, relations, profile, aliasMap)
       case Filter(cond, l: LogicalRelation) =>
-        // If the child is logical plan then firts update all dictionary attr with IntegerType
+        // If the child is logical plan then first update all dictionary attr with IntegerType
         val logicalOut =
           CarbonDictionaryDecoder.updateAttributes(child.output, relations, aliasMap)
         CarbonDictionaryDecoder.convertOutput(logicalOut, relations, profile, aliasMap)
@@ -177,6 +177,9 @@ object CountStarPlan {
       partialComputation: Seq[NamedExpression],
       child: LogicalPlan): Boolean = {
     if (groupingExpressions.nonEmpty) {
+      return false
+    }
+    if (partialComputation.isEmpty) {
       return false
     }
     if (partialComputation.size > 1 && partialComputation.nonEmpty) {

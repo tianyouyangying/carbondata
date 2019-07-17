@@ -199,6 +199,9 @@ public final class CarbonProperties {
       case DETAIL_QUERY_BATCH_SIZE:
         validateDetailQueryBatchSize();
         break;
+      case CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD:
+        validateIndexServerSerializationThreshold();
+        break;
       // TODO : Validation for carbon.lock.type should be handled for addProperty flow
       default:
         // none
@@ -264,6 +267,7 @@ public final class CarbonProperties {
     validateSortMemorySpillPercentage();
     validateStringCharacterLimit();
     validateDetailQueryBatchSize();
+    validateIndexServerSerializationThreshold();
   }
 
   /**
@@ -652,6 +656,38 @@ public final class CarbonProperties {
           + CarbonCommonConstants.BLOCKLET_SIZE_DEFAULT_VAL);
       carbonProperties.setProperty(BLOCKLET_SIZE,
           CarbonCommonConstants.BLOCKLET_SIZE_DEFAULT_VAL);
+    }
+  }
+
+  /**
+   * This method validates the index server serialization size
+   */
+  private void validateIndexServerSerializationThreshold() {
+    String serializationSizeString = carbonProperties
+        .getProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD,
+            CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT);
+    try {
+      int serializationSize = Integer.parseInt(serializationSizeString);
+
+      if (serializationSize < CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_MIN
+          || serializationSize
+          > CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_MAX) {
+        LOGGER.info(
+            "The " + CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD + " value \""
+                + serializationSize + "\" is invalid. Using the default value \""
+                + CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT);
+        carbonProperties
+            .setProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD,
+                CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT);
+      }
+    } catch (NumberFormatException e) {
+      LOGGER.info(
+          "The " + CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD + " value \""
+              + serializationSizeString + "\" is invalid. Using the default value \""
+              + CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT);
+      carbonProperties
+          .setProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD,
+              CarbonCommonConstants.CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT);
     }
   }
 
@@ -1052,6 +1088,23 @@ public final class CarbonProperties {
               CarbonCommonConstants.DATA_LOAD_BATCH_SIZE_DEFAULT));
     } catch (NumberFormatException exc) {
       batchSize = Integer.parseInt(CarbonCommonConstants.DATA_LOAD_BATCH_SIZE_DEFAULT);
+    }
+    return batchSize;
+  }
+
+  public static int getQueryBatchSize() {
+    int batchSize;
+    String batchSizeString =
+        CarbonProperties.getInstance().getProperty(CarbonCommonConstants.DETAIL_QUERY_BATCH_SIZE);
+    if (null != batchSizeString) {
+      try {
+        batchSize = Integer.parseInt(batchSizeString);
+      } catch (NumberFormatException ne) {
+        LOGGER.error("Invalid inmemory records size. Using default value");
+        batchSize = CarbonCommonConstants.DETAIL_QUERY_BATCH_SIZE_DEFAULT;
+      }
+    } else {
+      batchSize = CarbonCommonConstants.DETAIL_QUERY_BATCH_SIZE_DEFAULT;
     }
     return batchSize;
   }
@@ -1507,6 +1560,12 @@ public final class CarbonProperties {
     return Boolean.parseBoolean(pushFilters);
   }
 
+  public boolean isRangeCompactionAllowed() {
+    String isRangeCompact = getProperty(CarbonCommonConstants.CARBON_ENABLE_RANGE_COMPACTION,
+        CarbonCommonConstants.CARBON_ENABLE_RANGE_COMPACTION_DEFAULT);
+    return Boolean.parseBoolean(isRangeCompact);
+  }
+
   private void validateSortMemorySpillPercentage() {
     String spillPercentageStr = carbonProperties.getProperty(
         CARBON_LOAD_SORT_MEMORY_SPILL_PERCENTAGE,
@@ -1600,5 +1659,94 @@ public final class CarbonProperties {
             Integer.toString(DETAIL_QUERY_BATCH_SIZE_DEFAULT));
       }
     }
+  }
+
+  /**
+   * Check whether the Distributed Pruning is enabled by the user or not.
+   */
+  public boolean isDistributedPruningEnabled(String dbName, String tableName) {
+    // Check if user has enabled/disabled the use of index server for the current session using
+    // the set command
+    String configuredValue = getSessionPropertyValue(
+        CarbonCommonConstants.CARBON_ENABLE_INDEX_SERVER + "." + dbName + "." + tableName);
+    if (configuredValue == null) {
+      // if not set in session properties then check carbon.properties for the same.
+      configuredValue = getProperty(CarbonCommonConstants.CARBON_ENABLE_INDEX_SERVER);
+    }
+    boolean isServerEnabledByUser = Boolean.parseBoolean(configuredValue);
+    if (isServerEnabledByUser) {
+      LOGGER.info("Distributed Index server is enabled for " + dbName + "." + tableName);
+    }
+    return isServerEnabledByUser;
+  }
+
+  public String getIndexServerIP() {
+    return carbonProperties.getProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_IP, "");
+  }
+
+  public int getIndexServerPort() {
+    String configuredPort =
+        carbonProperties.getProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_PORT);
+    try {
+      return Integer.parseInt(configuredPort);
+    } catch (NumberFormatException e) {
+      LOGGER.error("Configured port for index server is not a valid number", e);
+      throw e;
+    }
+  }
+
+  /**
+   * Whether fallback is disabled by the user or not.
+   */
+  public boolean isFallBackDisabled() {
+    return Boolean.parseBoolean(carbonProperties
+        .getProperty(CarbonCommonConstants.CARBON_DISABLE_INDEX_SERVER_FALLBACK, "false"));
+  }
+
+  public int getNumberOfHandlersForIndexServer() {
+    String configuredValue =
+        carbonProperties.getProperty(CarbonCommonConstants.CARBON_INDEX_SERVER_WORKER_THREADS);
+    if (configuredValue != null) {
+      return Integer.parseInt(configuredValue);
+    }
+    return CarbonCommonConstants.CARBON_INDEX_SERVER_WORKER_THREADS_DEFAULT;
+  }
+
+  public int getNumOfThreadsForExecutorPruning() {
+    String configuredValue = CarbonProperties.getInstance()
+        .getProperty(CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING);
+    if (configuredValue == null || configuredValue.equalsIgnoreCase("0")) {
+      configuredValue = CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING_DEFAULT;
+    }
+    try {
+      int numOfThreads = Integer.parseInt(configuredValue);
+      LOGGER.info("Value for "
+          + CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING + " is "
+          + numOfThreads);
+      return numOfThreads;
+    } catch (NumberFormatException e) {
+      LOGGER.info(configuredValue + " is not a valid input for "
+          + CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING + ", taking "
+          + CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING_DEFAULT
+          + " as default value");
+      return Integer
+          .parseInt(CarbonCommonConstants.CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING_DEFAULT);
+    }
+  }
+
+  public static int getNumOfThreadsForPruning() {
+    int numOfThreadsForPruning = Integer.parseInt(CarbonProperties.getInstance()
+        .getProperty(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING,
+            CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT));
+    if (numOfThreadsForPruning > Integer
+        .parseInt(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT)
+        || numOfThreadsForPruning < 1) {
+      LOGGER.info("Invalid value for carbon.max.driver.threads.for.block.pruning, value :"
+          + numOfThreadsForPruning + " .using the default threads : "
+          + CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT);
+      numOfThreadsForPruning = Integer
+          .parseInt(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT);
+    }
+    return numOfThreadsForPruning;
   }
 }

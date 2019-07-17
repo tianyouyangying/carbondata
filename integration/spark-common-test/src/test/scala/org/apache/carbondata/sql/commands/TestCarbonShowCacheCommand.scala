@@ -181,7 +181,7 @@ class TestCarbonShowCacheCommand extends QueryTest with BeforeAndAfterAll {
     sql("use cache_empty_db").collect()
     val result1 = sql("show metacache").collect()
     assertResult(2)(result1.length)
-    assertResult(Row("cache_empty_db", "ALL", "0 B", "0 B", "0 B"))(result1(1))
+    assertResult(Row("cache_empty_db", "ALL", "0 B", "0 B", "0 B", "DRIVER"))(result1(1))
 
     // Database with 3 tables but only 2 are in cache
     sql("use cache_db").collect()
@@ -214,7 +214,8 @@ class TestCarbonShowCacheCommand extends QueryTest with BeforeAndAfterAll {
 
     // Table not in cache
     checkAnswer(sql("show metacache on table cache_db.cache_3"),
-      Seq(Row("Index", "0 B", "0/1 index files cached"), Row("Dictionary", "0 B", "")))
+      Seq(Row("Index", "0 B", "0/1 index files cached", "DRIVER"),
+        Row("Dictionary", "0 B", "", "DRIVER")))
 
     // Table with Index, Dictionary & PreAgg child table
     val result4 = sql("show metacache on table default.cache_4").collect()

@@ -346,6 +346,18 @@ public final class CarbonCommonConstants {
   public static final String CARBON_MERGE_INDEX_IN_SEGMENT_DEFAULT = "true";
 
   /**
+   * It is the user defined property to specify whether to throw exception or not in case
+   * if the MERGE INDEX JOB is failed. Default value - TRUE
+   * TRUE - throws exception and fails the corresponding LOAD job
+   * FALSE - Logs the exception and continue with the LOAD
+   */
+  @CarbonProperty
+  public static final String CARBON_MERGE_INDEX_FAILURE_THROW_EXCEPTION =
+      "carbon.merge.index.failure.throw.exception";
+
+  public static final String CARBON_MERGE_INDEX_FAILURE_THROW_EXCEPTION_DEFAULT = "true";
+
+  /**
    * property to be used for specifying the max byte limit for string/varchar data type till
    * where storing min/max in data file will be considered
    */
@@ -1193,6 +1205,10 @@ public final class CarbonCommonConstants {
 
   public static final String CARBON_RANGE_COLUMN_SCALE_FACTOR_DEFAULT = "3";
 
+  public static final String CARBON_ENABLE_RANGE_COMPACTION = "carbon.enable.range.compaction";
+
+  public static final String CARBON_ENABLE_RANGE_COMPACTION_DEFAULT = "true";
+
   //////////////////////////////////////////////////////////////////////////////////////////
   // Query parameter start here
   //////////////////////////////////////////////////////////////////////////////////////////
@@ -1449,6 +1465,14 @@ public final class CarbonCommonConstants {
   // block prune in multi-thread if files size more than 100K files.
   public static final int CARBON_DRIVER_PRUNING_MULTI_THREAD_ENABLE_FILES_COUNT = 100000;
 
+  /**
+   * max executor threads used for block pruning [1 to 4 threads]
+   */
+  @CarbonProperty public static final String CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING =
+      "carbon.max.executor.threads.for.block.pruning";
+
+  public static final String CARBON_MAX_EXECUTOR_THREADS_FOR_BLOCK_PRUNING_DEFAULT = "4";
+
   //////////////////////////////////////////////////////////////////////////////////////////
   // Datamap parameter start here
   //////////////////////////////////////////////////////////////////////////////////////////
@@ -1587,6 +1611,11 @@ public final class CarbonCommonConstants {
    * Secret Key for s3
    */
   public static final String S3_SECRET_KEY = "fs.s3.awsSecretAccessKey";
+
+  /**
+   * Configuration Key for custom file provider
+   */
+  public static final String CUSTOM_FILE_PROVIDER = "carbon.fs.custom.file.provider";
 
   /**
    * FS_DEFAULT_FS
@@ -1759,6 +1788,7 @@ public final class CarbonCommonConstants {
   public static final String ARRAY = "array";
   public static final String STRUCT = "struct";
   public static final String MAP = "map";
+  public static final String DECIMAL = "decimal";
   public static final String FROM = "from";
 
   /**
@@ -2124,4 +2154,94 @@ public final class CarbonCommonConstants {
    */
   public static final String CARBON_QUERY_DATAMAP_BLOOM_CACHE_SIZE_DEFAULT_VAL = "512";
 
+  /**
+   * The IP on which Index Server will be started.
+   */
+  @CarbonProperty
+  public static final String CARBON_INDEX_SERVER_IP = "carbon.index.server.ip";
+
+  /**
+   * The Port to be used to start Index Server.
+   */
+  @CarbonProperty
+  public static final String CARBON_INDEX_SERVER_PORT = "carbon.index.server.port";
+
+  /**
+   * Whether to use index server for caching and pruning or not.
+   * This property can be used for
+   * 1. the whole application(carbon.properties).
+   * 2. the whole session(set carbon.enable.index.server)
+   * 3. a specific table for one session (set carbon.enable.index.server.<dbName>.<tableName>)
+   */
+  @CarbonProperty(dynamicConfigurable = true)
+  public static final String CARBON_ENABLE_INDEX_SERVER = "carbon.enable.index.server";
+
+  /**
+   * Property is used to enable/disable fallback for indexserver.
+   * Used for testing purposes only.
+   */
+  public static final String CARBON_DISABLE_INDEX_SERVER_FALLBACK =
+      "carbon.disable.index.server.fallback";
+
+  public static final String CARBON_INDEX_SERVER_WORKER_THREADS =
+      "carbon.index.server.max.worker.threads";
+
+  public static final int CARBON_INDEX_SERVER_WORKER_THREADS_DEFAULT =
+      500;
+
+  /**
+   * This property will be used to store datamap name
+   */
+  public static final String DATAMAP_NAME = "datamap_name";
+
+  /**
+   * This property will be used to store parentable name's associated with datamap
+   */
+  public static final String PARENT_TABLES = "parent_tables";
+
+  public static final String LOAD_SYNC_TIME = "load_sync_time";
+
+  public static final String CARBON_INDEX_SERVER_JOBNAME_LENGTH =
+          "carbon.index.server.max.jobname.length";
+
+  public static final String CARBON_INDEX_SERVER_JOBNAME_LENGTH_DEFAULT =
+          "50";
+
+  @CarbonProperty
+  /**
+   * Max in memory serialization size after reaching threshold data will
+   * be written to file
+   */
+  public static final String CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD =
+      "carbon.index.server.inmemory.serialization.threshold.inKB";
+
+  /**
+   * default value for in memory serialization size
+   */
+  public static final String CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_DEFAULT = "300";
+
+  /**
+   * min value for in memory serialization size
+   */
+  public static final int CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_MIN = 100;
+
+  /**
+   * max value for in memory serialization size
+   */
+  public static final int CARBON_INDEX_SERVER_SERIALIZATION_THRESHOLD_MAX = 102400;
+
+  /**
+   * will be used to write split serialize data when in memory threashold crosses the limit
+   */
+  public static final String CARBON_INDEX_SERVER_TEMP_PATH = "carbon.indexserver.temp.path";
+
+  /**
+   * index server temp file name
+   */
+  public static final String INDEX_SERVER_TEMP_FOLDER_NAME = "indexservertmp";
+
+  /**
+   * hive column-name maximum length
+   */
+  public static final int MAXIMUM_CHAR_LENGTH = 128;
 }

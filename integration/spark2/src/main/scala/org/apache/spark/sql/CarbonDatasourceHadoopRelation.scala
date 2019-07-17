@@ -40,7 +40,6 @@ import org.apache.carbondata.core.metadata.schema.table.column.CarbonDimension
 import org.apache.carbondata.core.scan.expression.Expression
 import org.apache.carbondata.core.scan.expression.logical.AndExpression
 import org.apache.carbondata.hadoop.CarbonProjection
-import org.apache.carbondata.hadoop.util.CarbonInputFormatUtil
 import org.apache.carbondata.spark.rdd.{CarbonScanRDD, SparkReadSupport}
 
 case class CarbonDatasourceHadoopRelation(
@@ -196,8 +195,7 @@ case class CarbonDatasourceHadoopRelation(
   override def unhandledFilters(filters: Array[Filter]): Array[Filter] = new Array[Filter](0)
 
   override def toString: String = {
-    "CarbonDatasourceHadoopRelation [ " + "Database name :" + identifier.getDatabaseName +
-    ", " + "Table name :" + identifier.getTableName + ", Schema :" + tableSchema + " ]"
+    "CarbonDatasourceHadoopRelation"
   }
 
   override def sizeInBytes: Long = carbonRelation.sizeInBytes

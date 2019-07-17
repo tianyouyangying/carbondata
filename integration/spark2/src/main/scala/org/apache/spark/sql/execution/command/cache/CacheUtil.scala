@@ -17,20 +17,29 @@
 
 package org.apache.spark.sql.execution.command.cache
 
-import org.apache.hadoop.mapred.JobConf
 import scala.collection.JavaConverters._
 
+import org.apache.log4j.Logger
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.util.SparkSQLUtil
+
+import org.apache.carbondata.common.logging.LogServiceFactory
 import org.apache.carbondata.core.cache.CacheType
 import org.apache.carbondata.core.constants.CarbonCommonConstants
 import org.apache.carbondata.core.datamap.Segment
 import org.apache.carbondata.core.datastore.impl.FileFactory
 import org.apache.carbondata.core.metadata.schema.table.{CarbonTable, DataMapSchema}
 import org.apache.carbondata.core.readcommitter.LatestFilesReadCommittedScope
+import org.apache.carbondata.core.statusmanager.SegmentStatusManager
+import org.apache.carbondata.core.util.CarbonProperties
 import org.apache.carbondata.datamap.bloom.{BloomCacheKeyValue, BloomCoarseGrainDataMapFactory}
+import org.apache.carbondata.indexserver.IndexServer
 import org.apache.carbondata.processing.merger.CarbonDataMergerUtil
 
 
 object CacheUtil {
+
+  val LOGGER: Logger = LogServiceFactory.getLogService(this.getClass.getCanonicalName)
 
   /**
    * Given a carbonTable, returns the list of all carbonindex files
@@ -38,10 +47,27 @@ object CacheUtil {
    * @param carbonTable
    * @return List of all index files
    */
-  def getAllIndexFiles(carbonTable: CarbonTable): List[String] = {
+  def getAllIndexFiles(carbonTable: CarbonTable)(sparkSession: SparkSession): List[String] = {
     if (carbonTable.isTransactionalTable) {
       val absoluteTableIdentifier = carbonTable.getAbsoluteTableIdentifier
-      CarbonDataMergerUtil.getValidSegmentList(absoluteTableIdentifier).asScala.flatMap {
+      val validAndInvalidSegmentsInfo = new SegmentStatusManager(absoluteTableIdentifier)
+        .getValidAndInvalidSegments(carbonTable.isChildTable)
+      // Fire a job to clear the invalid segments cached in the executors.
+      if (CarbonProperties.getInstance().isDistributedPruningEnabled(carbonTable.getDatabaseName,
+        carbonTable.getTableName)) {
+        val invalidSegmentIds = validAndInvalidSegmentsInfo.getInvalidSegments.asScala
+          .map(_.getSegmentNo).toArray
+        try {
+          IndexServer.getClient
+            .invalidateSegmentCache(carbonTable,
+              invalidSegmentIds,
+              SparkSQLUtil.getTaskGroupId(sparkSession))
+        } catch {
+          case e: Exception =>
+            LOGGER.warn("Failed to clear cache from executors. ", e)
+        }
+      }
+      validAndInvalidSegmentsInfo.getValidSegments.asScala.flatMap {
         segment =>
           segment.getCommittedIndexFile.keySet().asScala
       }.map { indexFile =>
@@ -85,7 +111,7 @@ object CacheUtil {
 
   def getBloomCacheKeys(carbonTable: CarbonTable, datamap: DataMapSchema): List[String] = {
     val segments = CarbonDataMergerUtil
-      .getValidSegmentList(carbonTable.getAbsoluteTableIdentifier).asScala
+      .getValidSegmentList(carbonTable.getAbsoluteTableIdentifier, carbonTable.isChildTable).asScala
 
     // Generate shard Path for the datamap
     val shardPaths = segments.flatMap {

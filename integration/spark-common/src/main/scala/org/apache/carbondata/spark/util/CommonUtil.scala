@@ -95,12 +95,14 @@ object CommonUtil {
 
   def validateTblProperties(tableProperties: Map[String, String], fields: Seq[Field]): Boolean = {
     var isValid: Boolean = true
-    tableProperties.foreach {
-      case (key, value) =>
-        if (!validateFields(key, fields)) {
-          isValid = false
-          throw new MalformedCarbonCommandException(s"Invalid table properties ${ key }")
-        }
+    if (fields.nonEmpty) {
+      tableProperties.foreach {
+        case (key, value) =>
+          if (!validateFields(key, fields)) {
+            isValid = false
+            throw new MalformedCarbonCommandException(s"Invalid table properties $key")
+          }
+      }
     }
     isValid
   }
@@ -983,7 +985,14 @@ object CommonUtil {
     }
   }
 
-  def bytesToDisplaySize(size: Long): String = bytesToDisplaySize(BigDecimal.valueOf(size))
+  def bytesToDisplaySize(size: Long): String = {
+    try {
+      bytesToDisplaySize(BigDecimal.valueOf(size))
+    } catch {
+      case _: Exception =>
+        size.toString
+    }
+  }
 
   // This method converts the bytes count to display size upto 2 decimal places
   def bytesToDisplaySize(size: BigDecimal): String = {

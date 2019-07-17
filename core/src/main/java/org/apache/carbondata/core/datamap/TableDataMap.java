@@ -124,7 +124,7 @@ public final class TableDataMap extends OperationEventListener {
         datamapsCount++;
       }
     }
-    int numOfThreadsForPruning = getNumOfThreadsForPruning();
+    int numOfThreadsForPruning = CarbonProperties.getNumOfThreadsForPruning();
     if (numOfThreadsForPruning == 1 || datamapsCount < numOfThreadsForPruning || totalFiles
         < CarbonCommonConstants.CARBON_DRIVER_PRUNING_MULTI_THREAD_ENABLE_FILES_COUNT) {
       // use multi-thread, only if the files are more than 0.1 million.
@@ -206,7 +206,7 @@ public final class TableDataMap extends OperationEventListener {
      *********************************************************************************
      */
 
-    int numOfThreadsForPruning = getNumOfThreadsForPruning();
+    int numOfThreadsForPruning = CarbonProperties.getNumOfThreadsForPruning();
     LOG.info(
         "Number of threads selected for multi-thread block pruning is " + numOfThreadsForPruning
             + ". total files: " + totalFiles + ". total segments: " + segments.size());
@@ -323,22 +323,6 @@ public final class TableDataMap extends OperationEventListener {
     return blocklets;
   }
 
-  private int getNumOfThreadsForPruning() {
-    int numOfThreadsForPruning = Integer.parseInt(CarbonProperties.getInstance()
-        .getProperty(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING,
-            CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT));
-    if (numOfThreadsForPruning > Integer
-        .parseInt(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT)
-        || numOfThreadsForPruning < 1) {
-      LOG.info("Invalid value for carbon.max.driver.threads.for.block.pruning, value :"
-          + numOfThreadsForPruning + " .using the default threads : "
-          + CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT);
-      numOfThreadsForPruning = Integer
-          .parseInt(CarbonCommonConstants.CARBON_MAX_DRIVER_THREADS_FOR_BLOCK_PRUNING_DEFAULT);
-    }
-    return numOfThreadsForPruning;
-  }
-
   private List<ExtendedBlocklet> addSegmentId(List<ExtendedBlocklet> pruneBlocklets,
       Segment segment) {
     for (ExtendedBlocklet blocklet : pruneBlocklets) {
@@ -356,14 +340,7 @@ public final class TableDataMap extends OperationEventListener {
   public List<DataMapDistributable> toDistributable(List<Segment> segments) throws IOException {
     List<DataMapDistributable> distributables = new ArrayList<>();
     for (Segment segment : segments) {
-      List<DataMapDistributable> list =
-          dataMapFactory.toDistributable(segment);
-      for (DataMapDistributable distributable : list) {
-        distributable.setDataMapSchema(dataMapSchema);
-        distributable.setSegment(segment);
-        distributable.setTablePath(identifier.getTablePath());
-      }
-      distributables.addAll(list);
+      distributables.addAll(dataMapFactory.toDistributable(segment));
     }
     return distributables;
   }
@@ -420,10 +397,10 @@ public final class TableDataMap extends OperationEventListener {
 
   /**
    * Clear only the datamaps of the segments
-   * @param segments
+   * @param segmentIds list of segmentIds to be cleared from cache.
    */
-  public void clear(List<Segment> segments) {
-    for (Segment segment: segments) {
+  public void clear(List<String> segmentIds) {
+    for (String segment: segmentIds) {
       dataMapFactory.clear(segment);
     }
   }
@@ -452,6 +429,13 @@ public final class TableDataMap extends OperationEventListener {
     dataMapFactory.deleteDatamapData();
   }
 
+  /**
+   * delete datamap data for a segment if any
+   */
+  public void deleteSegmentDatamapData(String segmentNo) throws IOException {
+    dataMapFactory.deleteSegmentDatamapData(segmentNo);
+  }
+
   public DataMapSchema getDataMapSchema() {
     return dataMapSchema;
   }
@@ -462,31 +446,6 @@ public final class TableDataMap extends OperationEventListener {
 
   @Override public void onEvent(Event event, OperationContext opContext) throws Exception {
     dataMapFactory.fireEvent(event);
-  }
-
-  /**
-   * Method to prune the segments based on task min/max values
-   *
-   * @param segments
-   * @param filterExp
-   * @return
-   * @throws IOException
-   */
-  public List<Segment> pruneSegments(List<Segment> segments, FilterResolverIntf filterExp)
-      throws IOException {
-    List<Segment> prunedSegments = new ArrayList<>(CarbonCommonConstants.DEFAULT_COLLECTION_SIZE);
-    for (Segment segment : segments) {
-      List<DataMap> dataMaps = dataMapFactory.getDataMaps(segment);
-      for (DataMap dataMap : dataMaps) {
-        if (dataMap.isScanRequired(filterExp)) {
-          // If any one task in a given segment contains the data that means the segment need to
-          // be scanned and we need to validate further data maps in the same segment
-          prunedSegments.add(segment);
-          break;
-        }
-      }
-    }
-    return prunedSegments;
   }
 
   /**

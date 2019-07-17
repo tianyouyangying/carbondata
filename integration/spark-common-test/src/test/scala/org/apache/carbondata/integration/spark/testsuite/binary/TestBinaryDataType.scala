@@ -17,17 +17,17 @@
 package org.apache.carbondata.integration.spark.testsuite.binary
 
 import java.util.Arrays
-
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.core.constants.CarbonCommonConstants
 import org.apache.carbondata.core.metadata.CarbonMetadata
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable
 import org.apache.carbondata.core.util.CarbonProperties
-
 import org.apache.commons.codec.binary.Hex
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{AnalysisException, Row}
+import org.apache.commons.codec.binary.{Base64, Hex}
+import org.apache.spark.SparkException
+import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.test.util.QueryTest
-import org.apache.spark.util.SparkUtil
 import org.scalatest.BeforeAndAfterAll
 
 /**
@@ -52,7 +52,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -65,6 +65,17 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
             }
         }
         assert(flag)
+
+        sqlContext.udf.register("decodeHex", (str: String) => Hex.decodeHex(str.toCharArray))
+        sqlContext.udf.register("decodeBase64", (str: String) => Base64.decodeBase64(str.getBytes()))
+
+        val udfHexResult = sql("SELECT decodeHex(binaryField) FROM binaryTable")
+        val unhexResult = sql("SELECT unhex(binaryField) FROM binaryTable")
+        checkAnswer(udfHexResult, unhexResult)
+
+        val udfBase64Result = sql("SELECT decodeBase64(binaryField) FROM binaryTable")
+        val unbase64Result = sql("SELECT unbase64(binaryField) FROM binaryTable")
+        checkAnswer(udfBase64Result, unbase64Result)
 
         checkAnswer(sql("SELECT COUNT(*) FROM binaryTable"), Seq(Row(3)))
         try {
@@ -80,7 +91,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
                 val bytes40 = each.getAs[Array[Byte]](3).slice(0, 40)
                 val binaryName = each(2).toString
                 val expectedBytes = Hex.encodeHex(firstBytes20.get(binaryName).get)
-                assert(Arrays.equals(String.valueOf(expectedBytes).getBytes(), bytes40), "incorrect numeric value for flattened binaryField")
+                assert(Arrays.equals(String.valueOf(expectedBytes).getBytes(), bytes40), "incorrect value for binary data")
 
                 assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
 
@@ -91,7 +102,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
                     val binaryName = each(0).toString
                     val bytes40 = each.getAs[Array[Byte]](1).slice(0, 40)
                     val expectedBytes = Hex.encodeHex(firstBytes20.get(binaryName).get)
-                    assert(Arrays.equals(String.valueOf(expectedBytes).getBytes(), bytes40), "incorrect numeric value for flattened binaryField")
+                    assert(Arrays.equals(String.valueOf(expectedBytes).getBytes(), bytes40), "incorrect value for binary data")
                 }
             }
         } catch {
@@ -157,6 +168,63 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
               |     binaryField binary)
               | STORED BY 'org.apache.carbondata.format'
               | tblproperties('local_dictionary_enable'='true','LOCAL_DICTIONARY_EXCLUDE'='binaryField')
+            """.stripMargin)
+        assert(true)
+    }
+
+
+    test("Unsupport DICTIONARY_INCLUDE for binary") {
+
+        sql("DROP TABLE IF EXISTS binaryTable")
+        val exception = intercept[MalformedCarbonCommandException] {
+            sql(
+                """
+                  | CREATE TABLE binaryTable(
+                  |     id int,
+                  |     name string,
+                  |     city string,
+                  |     age int,
+                  |     binaryField binary)
+                  | STORED BY 'carbondata'
+                  | tblproperties('dictionary_include'='binaryField')
+                """.stripMargin)
+        }
+        assert(exception.getMessage.contains(
+            "DICTIONARY_INCLUDE is unsupported for binary data type column: binaryfield"))
+    }
+
+    test("Unsupport DICTIONARY_INCLUDE for binary, multiple column") {
+
+        sql("DROP TABLE IF EXISTS binaryTable")
+        val exception = intercept[MalformedCarbonCommandException] {
+            sql(
+                """
+                  | CREATE TABLE binaryTable(
+                  |     id int,
+                  |     name string,
+                  |     city string,
+                  |     age int,
+                  |     binaryField binary)
+                  | STORED BY 'carbondata'
+                  | tblproperties('dictionary_include'='name,binaryField')
+                """.stripMargin)
+        }
+        assert(exception.getMessage.contains(
+            "DICTIONARY_INCLUDE is unsupported for binary data type column: binaryfield"))
+    }
+
+    test("Supports DICTIONARY_EXCLUDE for binary") {
+        sql("DROP TABLE IF EXISTS binaryTable")
+        sql(
+            """
+              | CREATE TABLE binaryTable(
+              |     id int,
+              |     name string,
+              |     city string,
+              |     age int,
+              |     binaryField binary)
+              | STORED BY 'org.apache.carbondata.format'
+              | tblproperties('DICTIONARY_EXCLUDE'='binaryField')
             """.stripMargin)
         assert(true)
     }
@@ -248,7 +316,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -277,7 +345,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -306,7 +374,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -335,7 +403,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -362,7 +430,7 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
              """.stripMargin)
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarydata.csv'
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
                | INTO TABLE binaryTable
                | OPTIONS('header'='false')
              """.stripMargin)
@@ -614,6 +682,27 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
                | INTO TABLE carbontable
                | OPTIONS('header'='false','DELIMITER'='|','bad_records_action'='fail')
              """.stripMargin)
+
+        val hexHiveResult = sql("SELECT hex(binaryField) FROM hivetable")
+        val hexCarbonResult = sql("SELECT hex(binaryField) FROM carbontable")
+        checkAnswer(hexHiveResult, hexCarbonResult)
+        hexCarbonResult.collect().foreach { each =>
+            val result = new String(Hex.decodeHex((each.getAs[Array[Char]](0)).toString.toCharArray))
+            assert("\u0001history\u0002".equals(result)
+                    || "\u0001biology\u0002".equals(result)
+                    || "\u0001education\u0002".equals(result))
+        }
+
+        val base64HiveResult = sql("SELECT base64(binaryField) FROM hivetable")
+        val base64CarbonResult = sql("SELECT base64(binaryField) FROM carbontable")
+        checkAnswer(base64HiveResult, base64CarbonResult)
+        base64CarbonResult.collect().foreach { each =>
+            val result = new String(Base64.decodeBase64((each.getAs[Array[Char]](0)).toString))
+            assert("\u0001history\u0002".equals(result)
+                    || "\u0001biology\u0002".equals(result)
+                    || "\u0001education\u0002".equals(result))
+        }
+
 
         val hiveResult = sql("SELECT * FROM hivetable")
         val carbonResult = sql("SELECT * FROM carbontable")
@@ -1068,7 +1157,164 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
         assert(e.getMessage.contains("operation failed for default.binarytable: Alter table data type change operation failed: Given column binaryfield with data type BINARY cannot be modified. Only Int and Decimal data types are allowed for modification"))
     }
 
-    ignore("Create table and load data with binary column for hive: test encode without \u0001") {
+    test("Create table and load data with binary column for hive: test encode with base64") {
+        sql("DROP TABLE IF EXISTS hivetable")
+        sql("DROP TABLE IF EXISTS carbontable")
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS hivetable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | row format delimited fields terminated by ','
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataBase64.csv'
+               | INTO TABLE hivetable
+             """.stripMargin)
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS carbontable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | STORED BY 'carbondata'
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataBase64.csv'
+               | INTO TABLE carbontable
+               | OPTIONS('header'='false','DELIMITER'=',','binary_decoder'='baSe64')
+             """.stripMargin)
+
+        val hiveResult = sql("SELECT * FROM hivetable")
+        val carbonResult = sql("SELECT * FROM carbontable")
+        checkAnswer(hiveResult, carbonResult)
+
+        checkAnswer(sql("SELECT COUNT(*) FROM hivetable"), Seq(Row(3)))
+        try {
+            val carbonDF = carbonResult.collect()
+            assert(3 == carbonDF.length)
+            carbonDF.foreach { each =>
+                assert(5 == each.length)
+
+                assert(Integer.valueOf(each(0).toString) > 0)
+                assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
+                assert(each(2).toString.contains(".png"))
+
+                val value = each.getAs[Array[Byte]](3).slice(0, 10)
+                assert(new String(Base64.encodeBase64(value)).equals("iVBORw0KGgoAAA=="))
+                assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+            }
+
+            val df = hiveResult.collect()
+            assert(3 == df.length)
+            df.foreach { each =>
+                assert(5 == each.length)
+
+                assert(Integer.valueOf(each(0).toString) > 0)
+                assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
+                assert(each(2).toString.contains(".png"))
+
+
+                val value = each.getAs[Array[Byte]](3).slice(0, 10)
+                assert(new String(Base64.encodeBase64(value)).equals("iVBORw0KGgoAAA=="))
+                assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+            }
+        } catch {
+            case e: Exception =>
+                e.printStackTrace()
+                assert(false)
+        }
+    }
+
+    test("Create table and load data with binary column for hive: test encode with base64 and streaming = true") {
+        sql("DROP TABLE IF EXISTS hivetable")
+        sql("DROP TABLE IF EXISTS carbontable")
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS hivetable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | row format delimited fields terminated by ','
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataBase64.csv'
+               | INTO TABLE hivetable
+             """.stripMargin)
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS carbontable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | STORED BY 'carbondata'
+               | tblproperties('streaming'='true')
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataBase64.csv'
+               | INTO TABLE carbontable
+               | OPTIONS('header'='false','DELIMITER'=',','binary_decoder'='baSe64')
+             """.stripMargin)
+
+        val hiveResult = sql("SELECT * FROM hivetable")
+        val carbonResult = sql("SELECT * FROM carbontable")
+        checkAnswer(hiveResult, carbonResult)
+
+        checkAnswer(sql("SELECT COUNT(*) FROM hivetable"), Seq(Row(3)))
+        try {
+            val carbonDF = carbonResult.collect()
+            assert(3 == carbonDF.length)
+            carbonDF.foreach { each =>
+                assert(5 == each.length)
+
+                assert(Integer.valueOf(each(0).toString) > 0)
+                assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
+                assert(each(2).toString.contains(".png"))
+
+                val value = each.getAs[Array[Byte]](3).slice(0, 10)
+                assert(new String(Base64.encodeBase64(value)).equals("iVBORw0KGgoAAA=="))
+                assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+            }
+
+            val df = hiveResult.collect()
+            assert(3 == df.length)
+            df.foreach { each =>
+                assert(5 == each.length)
+
+                assert(Integer.valueOf(each(0).toString) > 0)
+                assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
+                assert(each(2).toString.contains(".png"))
+
+
+                val value = each.getAs[Array[Byte]](3).slice(0, 10)
+                assert(new String(Base64.encodeBase64(value)).equals("iVBORw0KGgoAAA=="))
+                assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+            }
+        } catch {
+            case e: Exception =>
+                e.printStackTrace()
+                assert(false)
+        }
+    }
+
+    test("Create table and load data with binary column for hive: test encode without \u0001 and not base64") {
+        // Carbon will throw exception if the data is not base64 when carbon set binary_decoder is base64
+        // hive will save as original data if the data is not base64
         sql("DROP TABLE IF EXISTS hivetable")
         sql("DROP TABLE IF EXISTS carbontable")
         sql(
@@ -1097,35 +1343,49 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
                |    autoLabel boolean)
                | STORED BY 'carbondata'
              """.stripMargin)
+        val e = intercept[Exception] {
+            sql(
+                s"""
+                   | LOAD DATA LOCAL INPATH '$resourcesPath/binarystringdata2.csv'
+                   | INTO TABLE carbontable
+                   | OPTIONS('header'='false','DELIMITER'='|','binary_decoder'='baSe64')
+             """.stripMargin)
+        }
+        assert(e.getMessage.contains("Binary decoder is base64, but data is not base64"))
+    }
+
+    test("Create table and load data with binary column with Hex decode") {
+        sql("DROP TABLE IF EXISTS binaryTable")
         sql(
             s"""
-               | LOAD DATA LOCAL INPATH '$resourcesPath/binarystringdata2.csv'
-               | INTO TABLE carbontable
-               | OPTIONS('header'='false','DELIMITER'='|')
+               | CREATE TABLE IF NOT EXISTS binaryTable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | STORED BY 'carbondata'
+               | TBLPROPERTIES('SORT_COLUMNS'='')
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
+               | INTO TABLE binaryTable
+               | OPTIONS('header'='false','binary_decoder'='hex')
              """.stripMargin)
 
-        val hiveResult = sql("SELECT * FROM hivetable")
-        val carbonResult = sql("SELECT * FROM carbontable")
-        // TODO
-        checkAnswer(hiveResult, carbonResult)
-
-        checkAnswer(sql("SELECT COUNT(*) FROM hivetable"), Seq(Row(3)))
-        try {
-            val carbonDF = carbonResult.collect()
-            assert(3 == carbonDF.length)
-            carbonDF.foreach { each =>
-                assert(5 == each.length)
-
-                assert(Integer.valueOf(each(0).toString) > 0)
-                assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
-                assert(each(2).toString.contains(".png"))
-
-                val value = new String(each.getAs[Array[Byte]](3))
-                // assert("\u0001history\u0002".equals(value) || "\u0001biology\u0002".equals(value) || "\u0001education\u0002".equals(value))
-                assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+        val result = sql("desc formatted binaryTable").collect()
+        var flag = false
+        result.foreach { each =>
+            if ("binary".equals(each.get(1))) {
+                flag = true
             }
+        }
+        assert(flag)
 
-            val df = hiveResult.collect()
+        checkAnswer(sql("SELECT COUNT(*) FROM binaryTable"), Seq(Row(3)))
+        try {
+            val df = sql("SELECT * FROM binaryTable").collect()
             assert(3 == df.length)
             df.foreach { each =>
                 assert(5 == each.length)
@@ -1134,10 +1394,20 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
                 assert(each(1).toString.equalsIgnoreCase("false") || (each(1).toString.equalsIgnoreCase("true")))
                 assert(each(2).toString.contains(".png"))
 
+                val bytes20 = each.getAs[Array[Byte]](3).slice(0, 20)
+                val binaryName = each(2).toString
+                assert(Arrays.equals(firstBytes20.get(binaryName).get, bytes20), "incorrect value for binary data")
 
-                val value = new String(each.getAs[Array[Byte]](3))
-                // assert("\u0001history\u0002".equals(value) || "\u0001biology\u0002".equals(value) || "\u0001education\u0002".equals(value))
                 assert(each(4).toString.equalsIgnoreCase("false") || (each(4).toString.equalsIgnoreCase("true")))
+
+                val df = sql("SELECT name,binaryField FROM binaryTable").collect()
+                assert(3 == df.length)
+                df.foreach { each =>
+                    assert(2 == each.length)
+                    val binaryName = each(0).toString
+                    val bytes20 = each.getAs[Array[Byte]](1).slice(0, 20)
+                    assert(Arrays.equals(firstBytes20.get(binaryName).get, bytes20), "incorrect value for binary data")
+                }
             }
         } catch {
             case e: Exception =>
@@ -1146,8 +1416,326 @@ class TestBinaryDataType extends QueryTest with BeforeAndAfterAll {
         }
     }
 
+    test("Create table and load data with binary column with invalid value") {
+        sql("DROP TABLE IF EXISTS binaryTable")
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS binaryTable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    binaryField binary,
+               |    autoLabel boolean)
+               | STORED BY 'carbondata'
+               | TBLPROPERTIES('SORT_COLUMNS'='')
+             """.stripMargin)
+        val e = intercept[Exception] {
+            sql(
+                s"""
+                   | LOAD DATA LOCAL INPATH '$resourcesPath/binaryDataHex.csv'
+                   | INTO TABLE binaryTable
+                   | OPTIONS('header'='false','binary_decoder'='he')
+             """.stripMargin)
+        }
+        assert(e.getMessage().contains(
+            "Binary decoder only support Base64, Hex or no decode for string, don't support he"))
+    }
+
+    test("insert into partition table") {
+        sql("DROP TABLE IF EXISTS hive_table")
+        sql("DROP TABLE IF EXISTS hive_table2")
+        sql("DROP TABLE IF EXISTS parquet_table")
+        sql("DROP TABLE IF EXISTS carbon_partition_table")
+
+        sql("set hive.exec.dynamic.partition.mode=strict")
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS hive_table (
+               |    name STRING,
+               |    id string)
+               | PARTITIONED BY(photo binary)
+               | row format delimited fields terminated by '|'
+             """.stripMargin)
+
+        sql("INSERT INTO hive_table PARTITION(photo='binary') select 'a','b'");
+        sql("INSERT INTO hive_table PARTITION(photo='1') select 'a','b'");
+        checkAnswer(sql("select cast(photo as string) from hive_table"), Seq(Row("binary"), Row("1")));
+
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS hive_table2 (
+               |    name STRING,
+               |    id string)
+               | PARTITIONED BY(photo binary)
+             """.stripMargin)
+
+        sql("INSERT INTO hive_table2 PARTITION(photo='binary') select 'a','b'");
+        sql("INSERT INTO hive_table2 PARTITION(photo='1') select 'a','b'");
+        checkAnswer(sql("select cast(photo as string) from hive_table2"), Seq(Row("binary"), Row("1")));
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS parquet_table (
+               |    name STRING,
+               |    id string)
+               | PARTITIONED BY(photo binary)
+               | STORED AS PARQUET
+             """.stripMargin)
+
+        sql("INSERT INTO parquet_table PARTITION(photo='binary') select 'a','b'");
+        sql("INSERT INTO parquet_table PARTITION(photo='1') select 'a','b'");
+
+        sql("select cast(photo as string) from parquet_table").show()
+        //TODO： is it a bug in parquet?
+        //        checkAnswer(sql("select cast(photo as string) from parquet_table"), Seq(Row(),Row()));
+
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS carbon_partition_table (
+               |    name STRING,
+               |    id string)
+               | PARTITIONED BY(photo binary)
+               | STORED BY 'carbondata'
+             """.stripMargin)
+
+
+        sql("INSERT INTO carbon_partition_table PARTITION(photo='binary') select 'a','b'");
+        sql("INSERT INTO carbon_partition_table PARTITION(photo='1') select 'a','b'");
+        sql("select * from carbon_partition_table").show()
+        sql("select cast(photo as string) from carbon_partition_table").show()
+        checkAnswer(sql("select cast(photo as string) from carbon_partition_table"), Seq(Row("binary"), Row("1")))
+        checkAnswer(sql("select * from carbon_partition_table"), sql("select * from hive_table"))
+
+        val e = intercept[SparkException] {
+            sql("insert into hive_table select 'a','b','binary'");
+        }
+
+        assert(e.getMessage.contains("Dynamic partition strict mode requires at least one static partition column"))
+
+        val eInt = intercept[Exception] {
+            sql("insert into hive_table select 'a','b','1'");
+        }
+
+        val e2 = intercept[SparkException] {
+            sql("insert into hive_table2 select 'a','b','binary'");
+        }
+
+        assert(e2.getMessage.contains("Dynamic partition strict mode requires at least one static partition column"))
+
+        val eInt2 = intercept[Exception] {
+            sql("insert into hive_table2 select 'a','b','1'");
+        }
+
+        val e3 = intercept[SparkException] {
+            sql("insert into parquet_table select 'a','b','binary'");
+        }
+
+        assert(e3.getMessage.contains("Dynamic partition strict mode requires at least one static partition column"))
+
+        val eInt3 = intercept[Exception] {
+            sql("insert into parquet_table select 'a','b','1'");
+        }
+
+        sql("insert into carbon_partition_table select 'a','b','binary'");
+        sql("insert into carbon_partition_table select 'a','b','1'");
+
+        checkAnswer(sql("select cast(photo as string) from carbon_partition_table"),
+            Seq(Row("binary"), Row("1"), Row("binary"), Row("1")))
+
+        sql("select * from carbon_partition_table").show()
+
+        // set hive.exec.dynamic.partition.mode=nonstrict
+        sql("set hive.exec.dynamic.partition.mode=nonstrict")
+        sql("insert into hive_table select 'a','b','binary'");
+        val eInt11 = intercept[AnalysisException] {
+            sql("insert into hive_table select 'a','b',1");
+        }
+        assert(eInt11.getMessage.contains("cannot resolve 'CAST(`1` AS BINARY)' due to data type mismatch: cannot cast "))
+
+        checkAnswer(sql("select cast(photo as string) from hive_table"),
+            Seq(Row("binary"), Row("1"), Row("binary")))
+
+        sql("insert into hive_table2 select 'a','b','binary'");
+        val eInt22 = intercept[AnalysisException] {
+            sql("insert into hive_table2 select 'a','b',1");
+        }
+        assert(eInt22.getMessage.contains("cannot resolve 'CAST(`1` AS BINARY)' due to data type mismatch: cannot cast "))
+
+        checkAnswer(sql("select cast(photo as string) from hive_table2"),
+            Seq(Row("binary"), Row("1"), Row("binary")))
+
+        sql("insert into parquet_table select 'a','b','binary'");
+        val eInt32 = intercept[AnalysisException] {
+            sql("insert into parquet_table select 'a','b',1");
+        }
+        assert(eInt32.getMessage.contains("cannot resolve 'CAST(`1` AS BINARY)' due to data type mismatch: cannot cast "))
+
+        //TODO: is it bug in parquet?
+        //        checkAnswer(sql("select cast(photo as string) from parquet_table"),
+        //            Seq(Row(),Row(),Row()))
+
+        sql("insert into carbon_partition_table select 'a','b','binary'");
+        sql("insert into carbon_partition_table select 'a','b','1'");
+
+        checkAnswer(sql("select cast(photo as string) from carbon_partition_table"),
+            Seq(Row("binary"), Row("1"), Row("binary"), Row("1"), Row("binary"), Row("1")))
+    }
+
+    test("Create table and load data with binary column for partition") {
+        sql("DROP TABLE IF EXISTS binaryTable")
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS binaryTable (
+               |    id int,
+               |    label boolean,
+               |    name string,
+               |    autoLabel boolean)
+               | PARTITIONED BY(binaryfield binary)
+               | STORED BY 'carbondata'
+               | TBLPROPERTIES('SORT_COLUMNS'='','PARTITION_TYPE'='HASH','NUM_PARTITIONS'='9')
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA LOCAL INPATH '$resourcesPath/binarystringdatawithHead.csv'
+               | INTO TABLE binaryTable
+               | partition(binaryfield)
+               | OPTIONS('header'='true','DELIMITER'='|')
+             """.stripMargin)
+
+        val result = sql("desc formatted binaryTable").collect()
+        var flag = false
+        result.foreach { each =>
+            if ("binary".equals(each.get(1))) {
+                flag = true
+            }
+        }
+        assert(flag)
+
+        checkAnswer(sql("SELECT COUNT(*) FROM binaryTable"), Seq(Row(3)))
+        try {
+            val df = sql("SELECT * FROM binaryTable").collect()
+            assert(3 == df.length)
+
+            df.foreach { each =>
+                assert(5 == each.length)
+                if (2 == each.get(0)) {
+                    assert("binary".equals(new String(each.getAs[Array[Byte]](4))))
+                } else if (1 == each.get(0)) {
+                    assert("Hello world".equals(new String(each.getAs[Array[Byte]](4))))
+                } else if (3 == each.get(0)) {
+                    assert("1".equals(new String(each.getAs[Array[Byte]](4))))
+                } else {
+                    assert(false)
+                }
+            }
+
+        } catch {
+            case e: Exception =>
+                e.printStackTrace()
+                assert(false)
+        }
+    }
+
+    test("Select query with average function for substring of binary column is executed.") {
+        sql("DROP TABLE IF EXISTS uniqdata")
+        sql(
+            s"""
+               | CREATE TABLE uniqdata (
+               |    CUST_ID int,
+               |    CUST_NAME binary,
+               |    ACTIVE_EMUI_VERSION string,
+               |    DOB timestamp,
+               |    DOJ timestamp,
+               |    BIGINT_COLUMN1 bigint,
+               |    BIGINT_COLUMN2 bigint,
+               |    DECIMAL_COLUMN1 decimal(30,10),
+               |    DECIMAL_COLUMN2 decimal(36,10),
+               |    Double_COLUMN1 double,
+               |    Double_COLUMN2 double,
+               |    INTEGER_COLUMN1 int)
+               | STORED BY 'org.apache.carbondata.format'
+               | TBLPROPERTIES('table_blocksize'='2000')
+             """.stripMargin)
+        sql(
+            s"""
+               | LOAD DATA inpath '$resourcesPath/restructure/data_2000.csv'
+               | into table uniqdata
+               | OPTIONS(
+               |    'DELIMITER'=',' ,
+               |    'QUOTECHAR'='"',
+               |    'BAD_RECORDS_ACTION'='FORCE',
+               |    'FILEHEADER'='CUST_ID,CUST_NAME,ACTIVE_EMUI_VERSION,DOB,DOJ,BIGINT_COLUMN1,BIGINT_COLUMN2,DECIMAL_COLUMN1,DECIMAL_COLUMN2,Double_COLUMN1,Double_COLUMN2,INTEGER_COLUMN1')
+             """.stripMargin)
+
+        sql(
+            s"""select substr(CUST_NAME,1,2)
+               | from uniqdata
+              """.stripMargin).show()
+
+        val e1 = intercept[Exception] {
+            sql(
+                s"""select avg(substr(CUST_NAME,1,2))
+                   | from uniqdata
+              """.stripMargin).show()
+        }
+        assert(e1.getMessage.contains("cannot resolve 'avg(substring(uniqdata.`CUST_NAME`, 1, 2))' due to data type mismatch: function average requires numeric types, not BinaryType"))
+
+        val e2 = intercept[Exception] {
+            sql(
+                s"""
+                   | select
+                   |    max(substr(CUST_NAME,1,2)),
+                   |    min(substr(CUST_NAME,1,2)),
+                   |    avg(substr(CUST_NAME,1,2)),
+                   |    count(substr(CUST_NAME,1,2)),
+                   |    sum(substr(CUST_NAME,1,2)),
+                   |    variance(substr(CUST_NAME,1,2))
+                   | from uniqdata
+                   | where CUST_ID IS NULL or DOB IS NOT NULL or BIGINT_COLUMN1 =1233720368578 or DECIMAL_COLUMN1 = 12345678901.1234000058 or Double_COLUMN1 = 1.12345674897976E10 or INTEGER_COLUMN1 IS NULL limit 10
+             """.stripMargin)
+        }
+        assert(e2.getMessage.contains("cannot resolve 'avg(substring(uniqdata.`CUST_NAME`, 1, 2))' due to data type mismatch: function average requires numeric types, not BinaryType"))
+
+        val e3 = intercept[Exception] {
+            sql(
+                s"""
+                   | select
+                   |    max(substring(CUST_NAME,1,2)),
+                   |    min(substring(CUST_NAME,1,2)),
+                   |    avg(substring(CUST_NAME,1,2)),
+                   |    count(substring(CUST_NAME,1,2)),
+                   |    sum(substring(CUST_NAME,1,2)),
+                   |    variance(substring(CUST_NAME,1,2))
+                   | from uniqdata
+                   | where CUST_ID IS NULL or DOB IS NOT NULL or BIGINT_COLUMN1 =1233720368578 or DECIMAL_COLUMN1 = 12345678901.1234000058 or Double_COLUMN1 = 1.12345674897976E10 or INTEGER_COLUMN1 IS NULL limit 10
+             """.stripMargin)
+        }
+        assert(e3.getMessage.contains("cannot resolve 'avg(substring(uniqdata.`CUST_NAME`, 1, 2))' due to data type mismatch: function average requires numeric types, not BinaryType"))
+
+    }
+
+    test("test binary insert with int value") {
+        sql("DROP TABLE IF EXISTS binaryTable")
+        sql(
+            s"""
+               | CREATE TABLE IF NOT EXISTS binaryTable (
+               |    binaryField binary)
+               | STORED BY 'carbondata'
+                     """.stripMargin)
+        val exception = intercept[AnalysisException] {
+            sql("insert into binaryTable select 1")
+        }
+        assert(exception.getMessage()
+          .contains(
+              "cannot resolve 'CAST(`1` AS BINARY)' due to data type mismatch: "))
+        sql("DROP TABLE binaryTable")
+    }
+
     override def afterAll: Unit = {
         sql("DROP TABLE IF EXISTS binaryTable")
         sql("DROP TABLE IF EXISTS hiveTable")
+        sql("DROP TABLE IF EXISTS hive_table")
     }
 }
